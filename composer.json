@@ -1,0 +1,15 @@
+{
+    "name": "blauwfruit/prestaops",
+    "description": "A CLI tool that does all kinds of things for PrestaShop",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3.10",
+        "vlucas/phpdotenv": "^5.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "PrestaOps\\": "src/"
+        }
+    }
+}
