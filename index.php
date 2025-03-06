@@ -4,4 +4,8 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-include 'prestaaudit.php';
+define('PRESTA_OPS_ROOT_DIR', getcwd() . '/');
+
+include 'vendor/autoload.php';
+include 'prestaops.php';
+
