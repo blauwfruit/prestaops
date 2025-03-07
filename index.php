@@ -6,6 +6,5 @@ ini_set('display_errors', 1);
 
 define('PRESTA_OPS_ROOT_DIR', getcwd() . '/');
 
-include 'vendor/autoload.php';
-include 'prestaops.php';
-
+require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/prestaops.php';
