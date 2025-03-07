@@ -27,4 +27,9 @@ class Messenger
     {
         echo "\e[32m$message\e[0m\n"; // Green
     }
+
+    public static function removeLine()
+    {
+        echo "\033[A\033[2K";
+    }
 }

@@ -11,11 +11,15 @@ class Migration
     public static $requiredVariables = [
         'SSH_HOST',
         'SSH_USER',
-        'DATABASE_HOST',
-        'DATABASE_USER',
-        'DATABASE_PASS',
-        'DATABASE_NAME',
+        'SOURCE_DATABASE_HOST',
+        'SOURCE_DATABASE_USER',
+        'SOURCE_DATABASE_PASS',
+        'SOURCE_DATABASE_NAME',
         'SOURCE_PATH',
+        'DESTINATION_DATABASE_HOST',
+        'DESTINATION_DATABASE_USER',
+        'DESTINATION_DATABASE_PASS',
+        'DESTINATION_DATABASE_NAME',
         'DESTINATION_PATH',
         'PRESTASHOP_VERSION',
     ];
@@ -23,8 +27,18 @@ class Migration
     public static $configFile = PRESTA_OPS_CONFIG_FILE_NAME;
     public static $dotenvPath = PRESTA_OPS_ROOT_DIR;
     public static $credentials;
-    public static $hash;
     public static $fileTransferProcessId;
+    public static $databaseMigrationProcessId;
+    public static $tablesToIgnore = [
+        'ps_connections',
+        'ps_connections_page',
+        'ps_connections_source',
+        'ps_log',
+        'ps_guest',
+        'ps_mail',
+        'ps_smarty_cache',
+        'ps_statssearch',
+    ];
 
     public static function run($args = null)
     {
@@ -75,7 +89,7 @@ class Migration
 
         exec(
             "ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} \"stat {$credentials['SOURCE_PATH']}/app/config/parameters.php\"",
-            $output,
+            $statOutput,
             $returnCode
         );
 
@@ -88,10 +102,9 @@ class Migration
         }
 
         // Test DB connection using exec() with credentials from the array
-        Messenger::info("Attempting database connection to {$credentials['DATABASE_HOST']}...");
+        Messenger::info("Attempting database connection to {$credentials['SOURCE_DATABASE_HOST']}...");
 
-
-        $dbTestCommand = "ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} 'mysql -h {$credentials['DATABASE_HOST']} -u {$credentials['DATABASE_USER']} -p'{$credentials['DATABASE_PASS']}' -D {$credentials['DATABASE_NAME']} -se \"SELECT * FROM ps_shop_url;\"'";
+        $dbTestCommand = "ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} 'mysql -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p'{$credentials['SOURCE_DATABASE_PASS']}' -D {$credentials['SOURCE_DATABASE_NAME']} -se \"SELECT * FROM ps_shop_url;\"'";
         exec($dbTestCommand, $output, $returnCode);
 
         if ($returnCode !== 0) {
@@ -113,11 +126,7 @@ class Migration
         Messenger::info("Starting migration steps...");
 
         // Rsync command with background execution
-        $hash = self::$hash = md5(time());
-        
-        exec("rm -rf {$credentials['DESTINATION_PATH']}/admin813ejh3uz");
-
-        $fileCopyCommand = "nohup rsync -avz {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:{$credentials['SOURCE_PATH']}/admin813ejh3uz {$credentials['DESTINATION_PATH']} > /dev/null 2>&1 & echo $!";
+        $fileCopyCommand = "nohup rsync -avz --exclude='var/' --exclude='img/tmp/' --exclude='themes/*/cache/' --exclude='app/config/parameters.php' {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:{$credentials['SOURCE_PATH']}/* {$credentials['DESTINATION_PATH']} > /dev/null 2>&1 & echo $!";
         
         // Execute the command and capture process ID (PID)
         exec($fileCopyCommand, $fileOutput, $fileReturnCode);
@@ -137,8 +146,80 @@ class Migration
         }
     }
 
+    /**
+     * Copy database to the destination server
+     * 
+     * - Excludes tables for effeciency from self::$tablesToIgnore
+     * - Use mysqldump in combination with exec() and nohup for background processing 
+     * - Use the most efficient way of exporting, compressing and transfering the file
+     * - Removes the file from the source server once it is transferred
+     * */
     public static function copyDatabase($credentials)
     {
+        Messenger::info("Starting database migration in the background...");
+
+        // List of tables to ignore
+        $ignoreTables = "";
+        if (!empty(self::$tablesToIgnore)) {
+            foreach (self::$tablesToIgnore as $table) {
+                $ignoreTables .= " --ignore-table={$credentials['SOURCE_DATABASE_NAME']}.$table";
+            }
+        }
+
+        // Remote and local dump file paths
+        $remoteDumpFile = "{$credentials['SOURCE_PATH']}/{$credentials['SOURCE_DATABASE_NAME']}.sql.gz";
+        $localDumpFile = "{$credentials['DESTINATION_DATABASE_NAME']}.sql.gz";
+
+        // Define the full Bash script
+        $bashScript = <<<BASH
+            #!/bin/bash
+            echo "Starting database migration..." >> /tmp/db_migration.log
+
+            # Export the database and compress it
+            ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "mysqldump -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p'{$credentials['SOURCE_DATABASE_PASS']}' $ignoreTables {$credentials['SOURCE_DATABASE_NAME']} | gzip > $remoteDumpFile"
+            echo "Database export completed." >> /tmp/db_migration.log
+
+            # Transfer the database dump file from remote to local
+            ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "stat $remoteDumpFile"
+            
+            scp -C {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:$remoteDumpFile $localDumpFile
+            echo "Database transfer completed." >> /tmp/db_migration.log
+        BASH;
+
+            // # Import the database into the destination server
+            // gunzip -c $localDumpFile | mysql -h {$credentials['DESTINATION_DATABASE_HOST']} -u {$credentials['DESTINATION_DATABASE_USER']} -p'{$credentials['DESTINATION_DATABASE_PASS']}' {$credentials['DESTINATION_DATABASE_NAME']}
+            // echo "Database import completed." >> /tmp/db_migration.log
+
+            // # Remove the database dump file from the remote server
+            // ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "rm -f $remoteDumpFile"
+            // echo "Remote dump file removed." >> /tmp/db_migration.log
+
+            // echo "Database migration completed successfully!" >> /tmp/db_migration.log
+
+        // Store the Bash script in a temporary file
+        $bashFile = "/tmp/db_migration.sh";
+        file_put_contents($bashFile, $bashScript);
+        chmod($bashFile, 0755); // Make it executable
+
+        // Execute the script in the background using nohup
+        // $nohupCommand = "nohup $bashFile > /dev/null 2>&1 & echo $!";
+        $nohupCommand = "bash $bashFile";
+        exec($nohupCommand, $output, $returnCode);
+
+        foreach ($output as $out) {
+            Messenger::info($out);
+        }
+
+        die;
+
+        // Store the process ID
+        self::$databaseMigrationProcessId = $output[0] ?? null;
+
+        if (!self::$databaseMigrationProcessId) {
+            Messenger::danger("Failed to start database migration.");
+        } else {
+            Messenger::success("Database migration started in the background. Process ID: " . self::$databaseMigrationProcessId);
+        }
     }
 
     public static function configureSite($credentials)
@@ -156,8 +237,14 @@ class Migration
 
         while (
             self::isProcessRunning(self::$fileTransferProcessId)
+            && self::isProcessRunning(self::$databaseMigrationProcessId)
         ) {
-            echo "\033[A\033[2K";
+            var_dump([
+                self::$fileTransferProcessId => self::isProcessRunning(self::$fileTransferProcessId),
+                self::$databaseMigrationProcessId =>self::isProcessRunning(self::$databaseMigrationProcessId) 
+            ]
+            );
+            // Messenger::removeLine();
             Messenger::info("\rStill checking transfer... " . $counter);
             $counter++;
             sleep(1);
