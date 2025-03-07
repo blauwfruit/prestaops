@@ -24,9 +24,9 @@ class Audit
         }
 
         // Check if a project path is provided
-        if ($argc < 2) {
-            Messenger::danger("Usage: check_modules.php /path/to/prestashop/project\n");
-        }
+        // if ($argc < 2) {
+        //     Messenger::danger("Usage: check_modules.php /path/to/prestashop/project\n");
+        // }
 
         $modulesPath = $prestaShopRoot . '/modules';
 
@@ -70,38 +70,6 @@ class Audit
             ];
         }
 
-        function getLatestTagOnGitHub($repo)
-        {
-            // Fetch GitHub token using GitHub CLI
-            $token = trim(shell_exec("gh auth token 2>/dev/null"));
-
-            if (empty($token)) {
-                Messenger::danger("No GitHub token found. Please authenticate using:\n gh auth login");
-            }
-
-            $url = "https://api.github.com/repos/$repo/releases/latest";
-
-            $options = [
-                "http" => [
-                    "method" => "GET",
-                    "header" => [
-                        "User-Agent: PHP",
-                        "Authorization: token $token"
-                    ]
-                ]
-            ];
-
-            $context = stream_context_create($options);
-            $response = file_get_contents($url, false, $context);
-
-            if ($response) {
-                $data = json_decode($response, true);
-                return $data['tag_name'] ?? null;
-            } else {
-                Messenger::danger("Failed to fetch release data from GitHub.");
-            }
-        }
-
         // Start module scanning
         Messenger::info("Scanning modules...");
 
@@ -132,7 +100,7 @@ class Audit
             }
 
             if ($moduleDetails['module_author'] == 'PrestaShop' && $moduleDetails['module_key'] == null) {
-                $tag = getLatestTagOnGitHub("prestashop/$module");
+                $tag = self::getLatestTagOnGitHub("prestashop/$module");
                 file_put_contents('module-check.csv', "$module;{$moduleDetails['module_author']};;{$moduleDetails['module_version']};;{$tag};\n", FILE_APPEND);
                 continue;
             }
@@ -168,15 +136,20 @@ class Audit
                     $json = file_get_contents($modulePath.'/composer.json');
                     $object = json_decode($json);
 
+                    if (property_exists($object, 'homepage')) {
+                        $array = preg_split('/\//', $object->homepage);
 
-                    $array = preg_split('/\//', $object->homepage);
+                        $lastTwo = array_slice($array, -2); // Get last two elements
+                        $repo = implode("/", $lastTwo); // Join with forward slash
 
-                    $lastTwo = array_slice($array, -2); // Get last two elements
-                    $repo = implode("/", $lastTwo); // Join with forward slash
-
-                    $tag = getLatestTagOnGitHub($repo);
+                        $tag = self::getLatestTagOnGitHub($repo);
+                        
+                        file_put_contents('module-check.csv', "$module;{$moduleDetails['module_author']};;{$moduleDetails['module_version']};;{$tag};\n", FILE_APPEND);
+                    } else {
+                        file_put_contents('module-check.csv', "$module;{$moduleDetails['module_author']};;{$moduleDetails['module_version']};;;\n", FILE_APPEND);
+                    }
                     
-                    file_put_contents('module-check.csv', "$module;{$moduleDetails['module_author']};;{$moduleDetails['module_version']};;{$tag};\n", FILE_APPEND);
+
                 } else {
                     file_put_contents('module-check.csv', "$module;{$moduleDetails['module_author']};;{$moduleDetails['module_version']};;;\n", FILE_APPEND);
                 }
@@ -186,5 +159,37 @@ class Audit
         }
         
         Messenger::info("Audit completed.");
+    }
+
+    public static function getLatestTagOnGitHub($repo)
+    {
+        // Fetch GitHub token using GitHub CLI
+        $token = trim(shell_exec("gh auth token 2>/dev/null"));
+
+        if (empty($token)) {
+            Messenger::danger("No GitHub token found. Please authenticate using:\n gh auth login");
+        }
+
+        $url = "https://api.github.com/repos/$repo/releases/latest";
+
+        $options = [
+            "http" => [
+                "method" => "GET",
+                "header" => [
+                    "User-Agent: PHP",
+                    "Authorization: token $token"
+                ]
+            ]
+        ];
+
+        $context = stream_context_create($options);
+        $response = file_get_contents($url, false, $context);
+
+        if ($response) {
+            $data = json_decode($response, true);
+            return $data['tag_name'] ?? null;
+        } else {
+            Messenger::danger("Failed to fetch release data from GitHub.");
+        }
     }
 }
