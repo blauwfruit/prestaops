@@ -1,0 +1,40 @@
+services:
+    mysql:
+        image: mariadb:10.4.6
+        ports:
+            - "3306:3306"
+        networks:
+            - prestashop
+        environment:
+            MYSQL_ROOT_USER: root
+            MYSQL_ROOT_PASSWORD: password
+            MYSQL_USER: user
+            MYSQL_PASSWORD: password
+            MYSQL_DATABASE: prestashop
+    apache:
+        image: prestashop/prestashop:${PS_VERSION}
+        networks:
+            - prestashop
+        depends_on:
+            - mysql
+        links:
+            - mysql
+        environment:
+            PS_INSTALL_AUTO: 1
+            DB_PASSWD: password
+            DB_NAME: prestashop
+            DB_SERVER: mysql
+            PS_DOMAIN: localhost
+            PS_FOLDER_INSTALL: install-dev
+            PS_FOLDER_ADMIN: admin-dev
+            # PS_DEV_MODE: true
+        ports:
+            - "80:80"
+        volumes:
+            - .:/var/www/prestaops
+        command: >
+            sh -c "apt-get update && apt-get install -y openssh-client git rsync nano &&
+                   apache2-foreground"
+
+networks:
+    prestashop:
