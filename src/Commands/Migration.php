@@ -182,7 +182,7 @@ class Migration
             # Transfer the database dump file from remote to local
             ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "stat $remoteDumpFile"
             
-            scp -C {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:$remoteDumpFile $localDumpFile
+            scp -C {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:"{$remoteDumpFile}" {$localDumpFile}
             echo "Database transfer completed." >> /tmp/db_migration.log
         BASH;
 
