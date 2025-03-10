@@ -38,6 +38,7 @@ class Migration
         'ps_mail',
         'ps_smarty_cache',
         'ps_statssearch',
+        'ps_search_index',
     ];
 
     public static function run($args = null)
@@ -176,14 +177,14 @@ class Migration
             echo "Starting database migration..." >> /tmp/db_migration.log
 
             # Export the database and compress it
-            ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "mysqldump -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p'{$credentials['SOURCE_DATABASE_PASS']}' $ignoreTables {$credentials['SOURCE_DATABASE_NAME']} | gzip > $remoteDumpFile"
-            echo "Database export completed." >> /tmp/db_migration.log
+            # ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "mysqldump -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p'{$credentials['SOURCE_DATABASE_PASS']}' $ignoreTables {$credentials['SOURCE_DATABASE_NAME']} | gzip > $remoteDumpFile"
 
             # Transfer the database dump file from remote to local
-            ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "stat $remoteDumpFile"
+            # ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "stat $remoteDumpFile"
             
-            scp -C {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:"{$remoteDumpFile}" {$localDumpFile}
-            echo "Database transfer completed." >> /tmp/db_migration.log
+            # scp -C {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:"{$remoteDumpFile}" {$localDumpFile}
+
+            gunzip -c {$localDumpFile} | mysql -h {$credentials['DESTINATION_DATABASE_HOST']} -u {$credentials['DESTINATION_DATABASE_USER']} -p'{$credentials['DESTINATION_DATABASE_PASS']}' {$credentials['DESTINATION_DATABASE_NAME']}
         BASH;
 
             // # Import the database into the destination server
