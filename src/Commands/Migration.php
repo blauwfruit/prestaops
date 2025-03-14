@@ -116,18 +116,19 @@ class Migration
         // Test DB connection using exec() with credentials from the array
         Messenger::info("Attempting database connection to {$credentials['SOURCE_DATABASE_HOST']}...");
 
-        $dbTestCommand = "ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} 'mysql -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p'{$credentials['SOURCE_DATABASE_PASS']}' -D {$credentials['SOURCE_DATABASE_NAME']} -se \"SELECT * FROM ps_shop_url;\"'";
+        $dbTestCommand = "ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} \"mysql -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p{$credentials['SOURCE_DATABASE_PASS']} -D {$credentials['SOURCE_DATABASE_NAME']} -se \\\"SELECT CONCAT(' - ', domain), IF(active, 'Active', 'Not active') AS status FROM ps_shop_url;\\\"\"";
         exec($dbTestCommand, $output, $returnCode);
 
         if ($returnCode !== 0) {
             Messenger::danger("Database connection failed: " . implode("\n", $output));
         } else {
+            Messenger::success("Database connection established successfully. Shop URL's:");
             foreach ($output as $line) {
                 Messenger::success($line);
             }
+            
         }
 
-        Messenger::success("Database connection established successfully.");
     }
 
     public static function rsyncFiles($credentials)
