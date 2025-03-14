@@ -3,6 +3,7 @@
 namespace PrestaOps\Commands;
 
 use PrestaOps\Tools\Messenger;
+use PrestaOps\Tools\CommandLineParser;
 use Dotenv\Dotenv;
 use mysqli;
 
@@ -21,6 +22,7 @@ class Migration
         'DESTINATION_DATABASE_PASS',
         'DESTINATION_DATABASE_NAME',
         'DESTINATION_PATH',
+        'DATABASE_PREFIX',
         'PRESTASHOP_VERSION',
     ];
 
@@ -44,6 +46,10 @@ class Migration
     public static $isSynchronous = false;
     public static $isDatabaseOnly = false;
     public static $isFilesOnly = false;
+    public static $isConfigureOnly = false;
+
+    public static $stagingUrlAffix;
+    public static $stagingUrls;
 
     public static function run($args = null)
     {
@@ -55,7 +61,6 @@ class Migration
 
         self::configureSite(self::$credentials);
         
-        self::checkForCompletion(self::$credentials);
         if (!self::isSynchronous()) {
             self::checkForCompletion(self::$credentials);
         }
@@ -78,15 +83,49 @@ class Migration
         self::$isSynchronous = true;
     }
 
-    public function setDatabaseOnly()
+    public static function setDatabaseOnly()
     {
         self::$isDatabaseOnly = true;
     }
 
-    public function setFilesOnly()
+    public static function setFilesOnly()
     {
         self::$isFilesOnly = true;
     }
+
+    public static function setConfigureOnly()
+    {
+        self::$isConfigureOnly = true;
+    }
+
+    public static function setStagingUrlAffix($stagingUrlAffix)
+    {
+        if (self::isValidDomain($stagingUrlAffix)) {
+            self::$stagingUrlAffix = $stagingUrlAffix;
+            Messenger::success("Domain $stagingUrlAffix is configured as a suffix domain.");
+            return;
+        }
+
+        Messenger::warning("Domain $stagingUrlAffix does not seem to be a valid domein.");
+    }
+    public static function setStagingUrls($stagingUrls)
+    {
+        foreach ($stagingUrls as $domain) {
+            if (self::isValidDomain($domain)) {
+                self::$stagingUrls[] = $domain;
+            } else {
+                Messenger::warning("Domain $domain is ignored, is not a valid domain.");
+            }
+        }
+
+
+    }
+
+    public static function isValidDomain(string $domain): bool
+    {
+        return (bool) filter_var($domain, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME);
+    }
+
 
     public static function getVariables($print = false)
     {
@@ -150,24 +189,37 @@ class Migration
         // Test DB connection using exec() with credentials from the array
         Messenger::info("Attempting database connection to {$credentials['SOURCE_DATABASE_HOST']}...");
 
-        $dbTestCommand = "ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} \"mysql -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p{$credentials['SOURCE_DATABASE_PASS']} -D {$credentials['SOURCE_DATABASE_NAME']} -se \\\"SELECT CONCAT(' - ', domain), IF(active, 'Active', 'Not active') AS status FROM ps_shop_url;\\\"\"";
+        self::executeSqlInSourceDatabase("SELECT CONCAT(' - ', domain), IF(active, 'Active', 'Not active') AS status FROM {$credentials['DATABASE_PREFIX']}shop_url;");
+
+    }
+
+    public static function executeSqlInSourceDatabase($query)
+    {
+        $credentials = self::$credentials;
+
+        $dbTestCommand = "ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} \"mysql -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p{$credentials['SOURCE_DATABASE_PASS']} -D {$credentials['SOURCE_DATABASE_NAME']} -se \\\"$query\\\"\"";
         exec($dbTestCommand, $output, $returnCode);
 
         if ($returnCode !== 0) {
-            Messenger::danger("Database connection failed: " . implode("\n", $output));
+            Messenger::warning("Database query failed: ");
+
+            foreach ($output as $line) {
+                Messenger::warning($line);
+            }
+
+            Messenger::danger("Stopping process.");
         } else {
-            Messenger::success("Database connection established successfully. Shop URL's:");
+            Messenger::success("Database query succeeded:");
+
             foreach ($output as $line) {
                 Messenger::success($line);
-            }
-            
+            }   
         }
-
     }
 
     public static function rsyncFiles($credentials)
     {
-        if (self::$isDatabaseOnly) {
+        if (self::$isDatabaseOnly || self::$isConfigureOnly) {
             return;
         }
 
@@ -177,10 +229,6 @@ class Migration
         Messenger::info("Starting migration steps...");
 
         // Rsync command with background execution
-        $fileCopyCommand = "nohup rsync -avz --exclude='var/' --exclude='img/tmp/' --exclude='themes/*/cache/' --exclude='app/config/parameters.php' {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:{$credentials['SOURCE_PATH']}/* {$credentials['DESTINATION_PATH']} > /dev/null 2>&1 & echo $!";
-        
-        // Execute the command and capture process ID (PID)
-        exec($fileCopyCommand, $fileOutput, $fileReturnCode);
         $command = "rsync -avz --exclude='var/' --exclude='img/tmp/' --exclude='themes/*/cache/' --exclude='app/config/parameters.php' {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:{$credentials['SOURCE_PATH']}/* {$credentials['DESTINATION_PATH']}";
         if (self::isSynchronous()) {
             self::runCommandLive($command);
@@ -218,8 +266,7 @@ class Migration
      * */
     public static function copyDatabase($credentials)
     {
-        Messenger::info("Starting database migration in the background...");
-        if (self::$isFilesOnly) {
+        if (self::$isFilesOnly || self::$isConfigureOnly) {
             return;
         }
 
@@ -238,51 +285,33 @@ class Migration
         // Define the full Bash script
         $bashScript = <<<BASH
             #!/bin/bash
-            echo "Starting database migration..." >> /tmp/db_migration.log
+            echo "Starting database migration..."
 
-            # Export the database and compress it
+            echo "Export the database and compress it"
             # ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "mysqldump -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p'{$credentials['SOURCE_DATABASE_PASS']}' $ignoreTables {$credentials['SOURCE_DATABASE_NAME']} | gzip > $remoteDumpFile"
 
-            # Transfer the database dump file from remote to local
+            # Check if file is created
             # ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "stat $remoteDumpFile"
             
             # scp -C {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:"{$remoteDumpFile}" {$localDumpFile}
 
-            gunzip -c {$localDumpFile} | mysql -h {$credentials['DESTINATION_DATABASE_HOST']} -u {$credentials['DESTINATION_DATABASE_USER']} -p'{$credentials['DESTINATION_DATABASE_PASS']}' {$credentials['DESTINATION_DATABASE_NAME']}
+            gunzip -c {$localDumpFile} | tail -n +2 | mysql -h {$credentials['DESTINATION_DATABASE_HOST']} -u {$credentials['DESTINATION_DATABASE_USER']} -p'{$credentials['DESTINATION_DATABASE_PASS']}' {$credentials['DESTINATION_DATABASE_NAME']}
+
+            ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "rm -f $remoteDumpFile"
         BASH;
-
-            // # Import the database into the destination server
-            // gunzip -c $localDumpFile | mysql -h {$credentials['DESTINATION_DATABASE_HOST']} -u {$credentials['DESTINATION_DATABASE_USER']} -p'{$credentials['DESTINATION_DATABASE_PASS']}' {$credentials['DESTINATION_DATABASE_NAME']}
-            // echo "Database import completed." >> /tmp/db_migration.log
-
-            // # Remove the database dump file from the remote server
-            // ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "rm -f $remoteDumpFile"
-            // echo "Remote dump file removed." >> /tmp/db_migration.log
-
-            // echo "Database migration completed successfully!" >> /tmp/db_migration.log
 
         // Store the Bash script in a temporary file
         $bashFile = "/tmp/db_migration.sh";
         file_put_contents($bashFile, $bashScript);
-        chmod($bashFile, 0755); // Make it executable
+        chmod($bashFile, 0755);
 
-        // Execute the script in the background using nohup
-        // $nohupCommand = "nohup $bashFile > /dev/null 2>&1 & echo $!";
-        $nohupCommand = "bash $bashFile";
-        exec($nohupCommand, $output, $returnCode);
-
-        foreach ($output as $out) {
-            Messenger::info($out);
-        }
         if (self::isSynchronous()) {
             Messenger::info("Starting database migration...");
             self::runCommandLive($bashFile);
         } else {
             Messenger::info("Starting database migration in the background...");
-            // Execute the script in the background using nohup
-            $nohupCommand = "nohup $bashFile > /dev/null 2>&1 & echo $!";
 
-            exec($nohupCommand, $output, $returnCode);
+            exec("nohup $bashFile > /dev/null 2>&1 & echo $!", $output, $returnCode);
 
             self::$databaseMigrationProcessId = $output[0] ?? null;
 
@@ -296,7 +325,52 @@ class Migration
 
     public static function configureSite($credentials)
     {
+        if (self::$isFilesOnly) {
+            return;
+        }
 
+        $stagingUrlAffix = self::$stagingUrlAffix;
+
+        $query = sprintf(
+            "UPDATE {$credentials['DATABASE_PREFIX']}shop_url 
+             SET {$credentials['DATABASE_PREFIX']}domain_ssl = CONCAT(
+                    LEFT({$credentials['DATABASE_PREFIX']}domain_ssl, LENGTH({$credentials['DATABASE_PREFIX']}domain_ssl) - LOCATE('.', REVERSE({$credentials['DATABASE_PREFIX']}domain_ssl))),
+                    '{$stagingUrlAffix}'
+                 ),
+                 {$credentials['DATABASE_PREFIX']}domain = CONCAT(
+                    LEFT({$credentials['DATABASE_PREFIX']}domain, LENGTH({$credentials['DATABASE_PREFIX']}domain) - LOCATE('.', REVERSE({$credentials['DATABASE_PREFIX']}domain))),
+                    '{$stagingUrlAffix}'
+                 )",
+            self::$stagingUrlAffix,
+            self::$stagingUrlAffix
+        );
+
+        self::executeSqlInDestinationDatabase($query);
+    }
+
+    public static function executeSqlInDestinationDatabase($query)
+    {
+        $credentials = self::$credentials;
+
+        $dbTestCommand = "mysql -h {$credentials['DESTINATION_DATABASE_HOST']} -u {$credentials['DESTINATION_DATABASE_USER']} -p{$credentials['DESTINATION_DATABASE_PASS']} -D {$credentials['DESTINATION_DATABASE_NAME']} -e \\\"$query\\\"";
+
+        exec($dbTestCommand, $output, $returnCode);
+
+        if ($returnCode !== 0) {
+            Messenger::warning("Database query failed: ");
+
+            foreach ($output as $line) {
+                Messenger::warning($line);
+            }
+
+            Messenger::danger("Stopping process. Line " . __LINE__);
+        } else {
+            Messenger::success("Database query succeeded:");
+
+            foreach ($output as $line) {
+                Messenger::success($line);
+            }   
+        }
     }
 
     public static function checkForCompletion($credentials)
@@ -311,11 +385,11 @@ class Migration
             self::isProcessRunning(self::$fileTransferProcessId)
             && self::isProcessRunning(self::$databaseMigrationProcessId)
         ) {
-            var_dump([
-                self::$fileTransferProcessId => self::isProcessRunning(self::$fileTransferProcessId),
-                self::$databaseMigrationProcessId =>self::isProcessRunning(self::$databaseMigrationProcessId) 
-            ]
-            );
+            // var_dump([
+            //     self::$fileTransferProcessId => self::isProcessRunning(self::$fileTransferProcessId),
+            //     self::$databaseMigrationProcessId =>self::isProcessRunning(self::$databaseMigrationProcessId) 
+            // ]
+            // );
             // Messenger::removeLine();
             Messenger::info("\rStill checking transfer... " . $counter);
             $counter++;
