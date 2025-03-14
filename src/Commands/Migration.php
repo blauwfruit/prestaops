@@ -41,6 +41,10 @@ class Migration
         'ps_search_index',
     ];
 
+    public static $isSynchronous = false;
+    public static $isDatabaseOnly = false;
+    public static $isFilesOnly = false;
+
     public static function run($args = null)
     {
         self::checkVariables();
@@ -52,6 +56,36 @@ class Migration
         self::configureSite(self::$credentials);
         
         self::checkForCompletion(self::$credentials);
+        if (!self::isSynchronous()) {
+            self::checkForCompletion(self::$credentials);
+        }
+    }
+
+    /**
+     * Return the sync mode
+     **/
+    public static function isSynchronous()
+    {
+        return self::$isSynchronous;
+    }
+
+    /**
+     * If you want to see what is happening, turn this on, this way  bash command is directly executing giving you the 
+     * results rightaway, that can be good for debuggin
+     **/
+    public static function enableSynchronousMode()
+    {
+        self::$isSynchronous = true;
+    }
+
+    public function setDatabaseOnly()
+    {
+        self::$isDatabaseOnly = true;
+    }
+
+    public function setFilesOnly()
+    {
+        self::$isFilesOnly = true;
     }
 
     public static function getVariables($print = false)
@@ -133,6 +167,10 @@ class Migration
 
     public static function rsyncFiles($credentials)
     {
+        if (self::$isDatabaseOnly) {
+            return;
+        }
+
         $credentials = self::$credentials;
 
         // Proceed with migration steps
@@ -143,19 +181,30 @@ class Migration
         
         // Execute the command and capture process ID (PID)
         exec($fileCopyCommand, $fileOutput, $fileReturnCode);
-
-        if ($fileReturnCode !== 0) {
-            Messenger::danger("Failed to start file transfer process.");
-        }
-
-        // Get the process ID (PID) of rsync
-        self::$fileTransferProcessId = $fileTransferProcessId = $fileOutput[0] ?? null;
-
-        if (!$fileTransferProcessId) {
-            Messenger::warning("Failed to start file transfer.");
-            Messenger::warning("$fileOutput");
+        $command = "rsync -avz --exclude='var/' --exclude='img/tmp/' --exclude='themes/*/cache/' --exclude='app/config/parameters.php' {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:{$credentials['SOURCE_PATH']}/* {$credentials['DESTINATION_PATH']}";
+        if (self::isSynchronous()) {
+            self::runCommandLive($command);
         } else {
-            Messenger::success("File transfer started in the background. Process ID: $fileTransferProcessId");
+            $fileCopyCommand = "nohup $command > /dev/null 2>&1 & echo $!";
+
+            exec($fileCopyCommand, $fileOutput, $fileReturnCode);
+
+            if ($fileReturnCode !== 0) {
+                Messenger::danger("Failed to start file transfer process.");
+            }
+
+            self::$fileTransferProcessId = $fileTransferProcessId = $fileOutput[0] ?? null;
+
+            if (!$fileTransferProcessId) {
+                Messenger::warning("Failed to start file transfer.");
+                Messenger::warning("$fileOutput");
+            } else {
+                Messenger::success("File transfer started in the background. Process ID: $fileTransferProcessId");
+                
+                foreach ($fileOutput as $output) {
+                    var_dump($output);
+                }
+            }
         }
     }
 
@@ -170,6 +219,9 @@ class Migration
     public static function copyDatabase($credentials)
     {
         Messenger::info("Starting database migration in the background...");
+        if (self::$isFilesOnly) {
+            return;
+        }
 
         // List of tables to ignore
         $ignoreTables = "";
@@ -222,16 +274,23 @@ class Migration
         foreach ($output as $out) {
             Messenger::info($out);
         }
-
-        die;
-
-        // Store the process ID
-        self::$databaseMigrationProcessId = $output[0] ?? null;
-
-        if (!self::$databaseMigrationProcessId) {
-            Messenger::danger("Failed to start database migration.");
+        if (self::isSynchronous()) {
+            Messenger::info("Starting database migration...");
+            self::runCommandLive($bashFile);
         } else {
-            Messenger::success("Database migration started in the background. Process ID: " . self::$databaseMigrationProcessId);
+            Messenger::info("Starting database migration in the background...");
+            // Execute the script in the background using nohup
+            $nohupCommand = "nohup $bashFile > /dev/null 2>&1 & echo $!";
+
+            exec($nohupCommand, $output, $returnCode);
+
+            self::$databaseMigrationProcessId = $output[0] ?? null;
+
+            if (!self::$databaseMigrationProcessId) {
+                Messenger::danger("Failed to start database migration.");
+            } else {
+                Messenger::success("Database migration started in the background. Process ID: " . self::$databaseMigrationProcessId);
+            }
         }
     }
 
@@ -356,5 +415,65 @@ class Migration
         }
         
         file_put_contents(PRESTA_OPS_ROOT_DIR.PRESTA_OPS_CONFIG_FILE_NAME, $lines);
+    }
+
+    /**
+     * Executes a shell command and displays its output live.
+     *
+     * @param string $command The shell command to execute.
+     * @return int|false The exit code of the process, or false on failure.
+     */
+    public static function runCommandLive($command)
+    {
+        $descriptorspec = [
+            0 => ["pipe", "r"],  // stdin (not used)
+            1 => ["pipe", "w"],  // stdout
+            2 => ["pipe", "w"]   // stderr
+        ];
+
+        $process = proc_open($command, $descriptorspec, $pipes);
+
+        if (!is_resource($process)) {
+            return false;
+        }
+
+        // Close the unused stdin pipe.
+        fclose($pipes[0]);
+
+        // Set stdout and stderr to non-blocking mode.
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        // Loop to fetch and output command output live.
+        while (true) {
+            $stdout = stream_get_contents($pipes[1]);
+            $stderr = stream_get_contents($pipes[2]);
+
+            if ($stdout !== false && strlen($stdout) > 0) {
+                echo $stdout;
+                flush(); // Ensure immediate output
+            }
+
+            if ($stderr !== false && strlen($stderr) > 0) {
+                echo $stderr;
+                flush();
+            }
+
+            $status = proc_get_status($process);
+            if (!$status['running']) {
+                break;
+            }
+
+            // Short sleep to reduce CPU usage
+            usleep(100000); // 100ms
+        }
+
+        // Close the pipes
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        // Get and return the exit code of the process.
+        $exitCode = proc_close($process);
+        return $exitCode;
     }
 }
