@@ -54,15 +54,26 @@ class Migration
         self::checkForCompletion(self::$credentials);
     }
 
+    public static function getVariables($print = false)
+    {
+        if (file_exists(PRESTA_OPS_ROOT_DIR.PRESTA_OPS_CONFIG_FILE_NAME)) {
+            Messenger::info('File ' . PRESTA_OPS_ROOT_DIR.PRESTA_OPS_CONFIG_FILE_NAME . ' exists');
+            $dotenv = Dotenv::createImmutable(PRESTA_OPS_ROOT_DIR, PRESTA_OPS_CONFIG_FILE_NAME);
+            self::$credentials = $dotenv->load();
+
+            foreach (self::$credentials as $key => $value) {
+                Messenger::info("$key: $value");
+            }
+
+            return self::$credentials;
+        }
+    }
+
     public static function checkVariables()
     {
         Messenger::info("Checking migration variables...");
 
-        if (file_exists(PRESTA_OPS_ROOT_DIR.PRESTA_OPS_CONFIG_FILE_NAME)) {
-            Messenger::info('File ' . PRESTA_OPS_ROOT_DIR.PRESTA_OPS_CONFIG_FILE_NAME . ' exists');
-            $dotenv = Dotenv::createImmutable(PRESTA_OPS_ROOT_DIR, PRESTA_OPS_CONFIG_FILE_NAME);
-            self::$credentials = $credentials = $dotenv->load();
-        }
+        $credentials = self::getVariables();
 
         foreach (self::$requiredVariables as $value) {
             if (!isset($credentials[$value])) {
