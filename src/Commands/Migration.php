@@ -49,7 +49,6 @@ class Migration
     public static $isConfigureOnly = false;
 
     public static $stagingUrlSuffix;
-    public static $stagingUrls;
 
     /**
      * Show help information for the migration command
@@ -127,24 +126,11 @@ class Migration
         self::$stagingUrlSuffix = $stagingUrlSuffix;
         Messenger::success("Domain $stagingUrlSuffix is configured as a staging domain suffix.");
     }
-    public static function setStagingUrls($stagingUrls)
-    {
-        foreach ($stagingUrls as $domain) {
-            if (self::isValidDomain($domain)) {
-                self::$stagingUrls[] = $domain;
-            } else {
-                Messenger::warning("Domain $domain is ignored, is not a valid domain.");
-            }
-        }
-
-
-    }
 
     public static function isValidDomain(string $domain): bool
     {
         return (bool) filter_var($domain, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME);
     }
-
 
     public static function getVariables($print = false)
     {

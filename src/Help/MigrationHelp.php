@@ -44,7 +44,6 @@ OPTIONS
 --files-only           Migrate only the files
 --configure-only       Configure only the domains
 --staging-url-suffix   Specify the staging domain suffix (e.g. staging.example.com)
---staging-urls         Specify specific staging domains (comma-separated)
 --sync                 Run the migration synchronously (direct visible output)
 
 HELP;

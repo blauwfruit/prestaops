@@ -29,7 +29,6 @@ class CommandLineParser
             '--files-only',
             '--configure-only',
             '--staging-url-suffix',
-            '--staging-url',
         ],
     ];
 
@@ -90,18 +89,9 @@ class CommandLineParser
                 Migration::setStagingUrlSuffix($stagingUrlSuffix);
             }
 
-            $stagingUrl = self::getOptionValue('--staging-url');
-            if ($stagingUrl !== null) {
-                $urls = explode(',', $stagingUrl);
-                Migration::setStagingUrls($urls);
-                foreach ($stagingUrl as $url) {
-                    Messenger::info("Staging URL: $url");
-                }
-            }
-
             if (self::hasOption('--configure-only')) {
-                if (!self::hasOption('--staging-url-suffix') && !self::hasOption('--staging-url')) {
-                    Messenger::danger('Staging URL suffix nor staging url is set.');
+                if (!self::hasOption('--staging-url-suffix')) {
+                    Messenger::danger('Staging URL suffix is not set.');
                 }
 
                 Migration::setConfigureOnly();
