@@ -29,6 +29,7 @@ class CommandLineParser
             '--files-only',
             '--configure-only',
             '--staging-url-suffix',
+            '--disable-ssl',
         ],
     ];
 
@@ -81,6 +82,10 @@ class CommandLineParser
 
             if (self::hasOption('--enable-synchronous-mode')) {
                 Migration::enableSynchronousMode();
+            }
+
+            if (self::hasOption('--disable-ssl')) {
+                Migration::setDisableSSL();
             }
 
             $stagingUrlSuffix = self::getOptionValue('--staging-url-suffix');

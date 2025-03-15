@@ -45,6 +45,7 @@ OPTIONS
 --configure-only       Configure only the domains
 --staging-url-suffix   Specify the staging domain suffix (e.g. staging.example.com)
 --sync                 Run the migration synchronously (direct visible output)
+--disable-ssl         Disable SSL for local development purposes
 
 HELP;
     }
@@ -63,6 +64,9 @@ EXAMPLES
 
 3. Migrate files only:
    prestaops migrate --files-only
+
+4. Local migration without SSL:
+   prestaops migrate --staging-url-suffix=local.test --disable-ssl
 
 HELP;
     }

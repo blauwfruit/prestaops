@@ -49,6 +49,7 @@ class Migration
     public static $isConfigureOnly = false;
 
     public static $stagingUrlSuffix;
+    public static $disableSSL = false;
 
     /**
      * Show help information for the migration command
@@ -387,8 +388,30 @@ class Migration
 
                 $updateQuery = "UPDATE {$credentials['DATABASE_PREFIX']}shop_url 
                               SET domain = :domain,
-                                  domain_ssl = :domain_ssl
-                              WHERE id_shop_url = :id";
+                                  domain_ssl = :domain_ssl,
+                                  physical_uri = '/',
+                                  virtual_uri = ''";
+
+                // Als SSL uitgeschakeld moet worden
+                if (self::$disableSSL) {
+                    try {
+                        // Update SSL configuratie eerst
+                        $disableSSLQuery = "UPDATE {$credentials['DATABASE_PREFIX']}configuration 
+                                          SET value = '0' 
+                                          WHERE name IN ('PS_SSL_ENABLED', 'PS_SSL_ENABLED_EVERYWHERE', 'PS_COOKIE_SAMESITE')";
+                        
+                        self::executePreparedStatement(
+                            $disableSSLQuery,
+                            []
+                        );
+                        
+                        Messenger::info("SSL configuration is updated in PrestaShop");
+                    } catch (\Exception $e) {
+                        Messenger::warning("Error updating SSL configuration: " . $e->getMessage());
+                    }
+                }
+
+                $updateQuery .= " WHERE id_shop_url = :id";
 
                 $params = [
                     ':domain' => $newDomain,
@@ -398,6 +421,10 @@ class Migration
 
                 self::executePreparedStatement($updateQuery, $params);
                 Messenger::success("Domain updated from {$domain['domain']} to $newDomain");
+                
+                if (self::$disableSSL) {
+                    Messenger::info("SSL is disabled for domain: $newDomain");
+                }
             } catch (\Exception $e) {
                 Messenger::warning("Error updating domain {$domain['domain']}: " . $e->getMessage());
             }
@@ -657,5 +684,11 @@ class Migration
         // Get and return the exit code of the process.
         $exitCode = proc_close($process);
         return $exitCode;
+    }
+
+    public static function setDisableSSL()
+    {
+        self::$disableSSL = true;
+        Messenger::info("SSL will be disabled for local development.");
     }
 }
