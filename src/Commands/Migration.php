@@ -356,7 +356,6 @@ class Migration
         if (!self::$stagingUrlSuffix && self::$isConfigureOnly) {
             Messenger::warning("No staging URL suffix configured.");
             Messenger::danger("In configure-only mode, a staging URL suffix must be provided.");
-            exit(1);
         }
 
         // Get current domains
@@ -429,6 +428,10 @@ class Migration
                 Messenger::warning("Error updating domain {$domain['domain']}: " . $e->getMessage());
             }
         }
+
+        // Always regenerate .htaccess after domain updates
+        Messenger::info("Regenerating .htaccess file...");
+        self::regenerateHtaccess($credentials);
     }
 
     private static function executePreparedStatement($query, $params)
@@ -690,5 +693,70 @@ class Migration
     {
         self::$disableSSL = true;
         Messenger::info("SSL will be disabled for local development.");
+    }
+
+    /**
+     * Regenerate the .htaccess file for PrestaShop
+     */
+    public static function regenerateHtaccess($credentials)
+    {
+        Messenger::info("Regenerating .htaccess file using PrestaShop's native function...");
+
+        try {
+            // Laad PrestaShop's configuratie
+            if (!defined('_PS_ROOT_DIR_')) {
+                define('_PS_ROOT_DIR_', $credentials['DESTINATION_PATH']);
+            }
+            
+            // Laad de benodigde PrestaShop bestanden
+            $configPath = $credentials['DESTINATION_PATH'] . '/config/config.inc.php';
+            if (!file_exists($configPath)) {
+                throw new \Exception("PrestaShop config.inc.php not found at: $configPath");
+            }
+
+            // Bewaar de huidige working directory
+            $originalDir = getcwd();
+            
+            // Verander naar PrestaShop directory voor het laden van de configuratie
+            chdir($credentials['DESTINATION_PATH']);
+            
+            // Laad PrestaShop configuratie
+            require_once $configPath;
+            
+            // Laad Tools class als deze nog niet beschikbaar is
+            if (!class_exists('Tools')) {
+                require_once _PS_ROOT_DIR_ . '/classes/Tools.php';
+            }
+
+            // Gebruik PrestaShop's native functie om .htaccess te genereren
+            if (method_exists('Tools', 'generateHtaccess')) {
+                \Tools::generateHtaccess();
+                Messenger::success(".htaccess has been regenerated using PrestaShop's native function.");
+            } else {
+                throw new \Exception("PrestaShop Tools::generateHtaccess() method not found.");
+            }
+
+            // Herstel de originele working directory
+            chdir($originalDir);
+
+        } catch (\Exception $e) {
+            Messenger::warning("Error regenerating .htaccess: " . $e->getMessage());
+            
+            // Fallback naar de template kopie als de native methode faalt
+            Messenger::info("Falling back to template copy method...");
+            
+            try {
+                if (file_exists("{$credentials['DESTINATION_PATH']}/config/htaccess.txt")) {
+                    copy(
+                        "{$credentials['DESTINATION_PATH']}/config/htaccess.txt",
+                        "{$credentials['DESTINATION_PATH']}/.htaccess"
+                    );
+                    chmod("{$credentials['DESTINATION_PATH']}/.htaccess", 0644);
+                    Messenger::success(".htaccess file has been regenerated from template.");
+                }
+            } catch (\Exception $fallbackError) {
+                Messenger::danger("Fallback method also failed: " . $fallbackError->getMessage());
+            }
+        }
     }
 }
