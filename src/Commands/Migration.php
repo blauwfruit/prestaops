@@ -240,8 +240,8 @@ class Migration
         // Proceed with migration steps
         Messenger::info("Starting migration steps...");
 
-        // Rsync command with background execution
-        $command = "rsync -avz --exclude='var/' --exclude='img/tmp/' --exclude='themes/*/cache/' --exclude='app/config/parameters.php' {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:{$credentials['SOURCE_PATH']}/* {$credentials['DESTINATION_PATH']}";
+        // Rsync command with background execution and permission preservation
+        $command = "rsync -avzp --perms --chmod=D2775,F664 --exclude='var/' --exclude='img/tmp/' --exclude='themes/*/cache/' --exclude='app/config/parameters.php' {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:{$credentials['SOURCE_PATH']}/* {$credentials['DESTINATION_PATH']}";
         if (self::isSynchronous()) {
             self::runCommandLive($command);
         } else {
