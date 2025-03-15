@@ -4,8 +4,8 @@ namespace PrestaOps\Commands;
 
 use PrestaOps\Tools\Messenger;
 use PrestaOps\Tools\CommandLineParser;
+use PrestaOps\Help\MigrationHelp;
 use Dotenv\Dotenv;
-use mysqli;
 
 class Migration
 {
@@ -48,17 +48,27 @@ class Migration
     public static $isFilesOnly = false;
     public static $isConfigureOnly = false;
 
-    public static $stagingUrlAffix;
+    public static $stagingUrlSuffix;
     public static $stagingUrls;
+
+    /**
+     * Show help information for the migration command
+     */
+    public static function showHelp()
+    {
+        MigrationHelp::show();
+    }
 
     public static function run($args = null)
     {
+        if (isset($args['help'])) {
+            MigrationHelp::show();
+            return;
+        }
+
         self::checkVariables();
-
         self::rsyncFiles(self::$credentials);
-
         self::copyDatabase(self::$credentials);
-
         self::configureSite(self::$credentials);
         
         if (!self::isSynchronous()) {
@@ -98,15 +108,24 @@ class Migration
         self::$isConfigureOnly = true;
     }
 
-    public static function setStagingUrlAffix($stagingUrlAffix)
+    public static function setStagingUrlSuffix($stagingUrlSuffix)
     {
-        if (self::isValidDomain($stagingUrlAffix)) {
-            self::$stagingUrlAffix = $stagingUrlAffix;
-            Messenger::success("Domain $stagingUrlAffix is configured as a suffix domain.");
+        // Remove any leading/trailing dots and spaces
+        $stagingUrlSuffix = trim($stagingUrlSuffix, '. ');
+
+        if (!self::isValidDomain($stagingUrlSuffix)) {
+            Messenger::warning("Domain $stagingUrlSuffix does not seem to be a valid domain.");
             return;
         }
 
-        Messenger::warning("Domain $stagingUrlAffix does not seem to be a valid domein.");
+        // Check if the suffix is already present
+        if (self::$stagingUrlSuffix === $stagingUrlSuffix) {
+            Messenger::info("Staging URL suffix '$stagingUrlSuffix' is already configured.");
+            return;
+        }
+
+        self::$stagingUrlSuffix = $stagingUrlSuffix;
+        Messenger::success("Domain $stagingUrlSuffix is configured as a staging domain suffix.");
     }
     public static function setStagingUrls($stagingUrls)
     {
@@ -219,7 +238,13 @@ class Migration
 
     public static function rsyncFiles($credentials)
     {
-        if (self::$isDatabaseOnly || self::$isConfigureOnly) {
+        if (self::$isDatabaseOnly) {
+            Messenger::info("Overslaan van bestandsoverdracht (database-only modus)");
+            return;
+        }
+
+        if (self::$isConfigureOnly) {
+            Messenger::info("Overslaan van bestandsoverdracht (configure-only modus)");
             return;
         }
 
@@ -266,7 +291,13 @@ class Migration
      * */
     public static function copyDatabase($credentials)
     {
-        if (self::$isFilesOnly || self::$isConfigureOnly) {
+        if (self::$isFilesOnly) {
+            Messenger::info("Overslaan van database migratie (files-only modus)");
+            return;
+        }
+
+        if (self::$isConfigureOnly) {
+            Messenger::info("Overslaan van database migratie (configure-only modus)");
             return;
         }
 
@@ -326,58 +357,149 @@ class Migration
     public static function configureSite($credentials)
     {
         if (self::$isFilesOnly) {
+            Messenger::info("Skipping site configuration (files-only mode)");
             return;
         }
 
-        $stagingUrlAffix = self::$stagingUrlAffix;
+        if (!self::$stagingUrlSuffix && !self::$isConfigureOnly) {
+            Messenger::info("No staging URL suffix configured, skipping site configuration");
+            return;
+        }
 
-        $query = sprintf(
-            "UPDATE {$credentials['DATABASE_PREFIX']}shop_url 
-             SET {$credentials['DATABASE_PREFIX']}domain_ssl = CONCAT(
-                    LEFT({$credentials['DATABASE_PREFIX']}domain_ssl, LENGTH({$credentials['DATABASE_PREFIX']}domain_ssl) - LOCATE('.', REVERSE({$credentials['DATABASE_PREFIX']}domain_ssl))),
-                    '{$stagingUrlAffix}'
-                 ),
-                 {$credentials['DATABASE_PREFIX']}domain = CONCAT(
-                    LEFT({$credentials['DATABASE_PREFIX']}domain, LENGTH({$credentials['DATABASE_PREFIX']}domain) - LOCATE('.', REVERSE({$credentials['DATABASE_PREFIX']}domain))),
-                    '{$stagingUrlAffix}'
-                 )",
-            self::$stagingUrlAffix,
-            self::$stagingUrlAffix
-        );
+        if (!self::$stagingUrlSuffix && self::$isConfigureOnly) {
+            Messenger::warning("No staging URL suffix configured.");
+            Messenger::danger("In configure-only mode, a staging URL suffix must be provided.");
+            exit(1);
+        }
 
-        self::executeSqlInDestinationDatabase($query);
+        // Get current domains
+        $selectQuery = "SELECT id_shop_url, domain, domain_ssl FROM {$credentials['DATABASE_PREFIX']}shop_url";
+        $domains = self::executeSqlInDestinationDatabase($selectQuery, true);
+
+        if (!$domains) {
+            Messenger::warning("No domains found to update.");
+            return;
+        }
+
+        $stagingSuffix = trim(self::$stagingUrlSuffix, '.');
+
+        foreach ($domains as $domain) {
+            try {
+                // Check if the staging suffix is already present in the domain
+                if (strpos($domain['domain'], $stagingSuffix) !== false) {
+                    Messenger::info("Domain {$domain['domain']} already contains staging suffix, skipping.");
+                    continue;
+                }
+
+                // Get the base domain by removing any existing staging suffixes and replacing dots
+                $baseDomain = preg_replace('/\.' . preg_quote($stagingSuffix, '/') . '$/', '', $domain['domain']);
+                // Remove the dot between domain and TLD
+                $baseDomain = str_replace('.', '', $baseDomain);
+                
+                // Create new domain by appending the staging suffix
+                $newDomain = $baseDomain . '.' . $stagingSuffix;
+
+                $updateQuery = "UPDATE {$credentials['DATABASE_PREFIX']}shop_url 
+                              SET domain = :domain,
+                                  domain_ssl = :domain_ssl
+                              WHERE id_shop_url = :id";
+
+                $params = [
+                    ':domain' => $newDomain,
+                    ':domain_ssl' => $newDomain,
+                    ':id' => $domain['id_shop_url']
+                ];
+
+                self::executePreparedStatement($updateQuery, $params);
+                Messenger::success("Domain updated from {$domain['domain']} to $newDomain");
+            } catch (\Exception $e) {
+                Messenger::warning("Error updating domain {$domain['domain']}: " . $e->getMessage());
+            }
+        }
     }
 
-    public static function executeSqlInDestinationDatabase($query)
+    private static function executePreparedStatement($query, $params)
     {
         $credentials = self::$credentials;
 
-        $dbTestCommand = "mysql -h {$credentials['DESTINATION_DATABASE_HOST']} -u {$credentials['DESTINATION_DATABASE_USER']} -p{$credentials['DESTINATION_DATABASE_PASS']} -D {$credentials['DESTINATION_DATABASE_NAME']} -e \\\"$query\\\"";
+        try {
+            $dsn = sprintf(
+                'mysql:host=%s;dbname=%s;charset=utf8mb4',
+                $credentials['DESTINATION_DATABASE_HOST'],
+                $credentials['DESTINATION_DATABASE_NAME']
+            );
+            
+            $pdo = new \PDO(
+                $dsn,
+                $credentials['DESTINATION_DATABASE_USER'],
+                $credentials['DESTINATION_DATABASE_PASS'],
+                [
+                    \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                    \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC
+                ]
+            );
 
-        exec($dbTestCommand, $output, $returnCode);
+            $stmt = $pdo->prepare($query);
+            $stmt->execute($params);
+            
+            return true;
+        } catch (\PDOException $e) {
+            throw new \Exception("Database fout: " . $e->getMessage());
+        }
+    }
 
-        if ($returnCode !== 0) {
-            Messenger::warning("Database query failed: ");
+    public static function executeSqlInDestinationDatabase($query, $returnResults = false)
+    {
+        $credentials = self::$credentials;
 
-            foreach ($output as $line) {
-                Messenger::warning($line);
+        try {
+            $dsn = sprintf(
+                'mysql:host=%s;dbname=%s;charset=utf8mb4',
+                $credentials['DESTINATION_DATABASE_HOST'],
+                $credentials['DESTINATION_DATABASE_NAME']
+            );
+            
+            $pdo = new \PDO(
+                $dsn,
+                $credentials['DESTINATION_DATABASE_USER'],
+                $credentials['DESTINATION_DATABASE_PASS'],
+                [
+                    \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                    \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC
+                ]
+            );
+
+            $result = $pdo->query($query);
+            Messenger::success("Database query succesvol uitgevoerd.");
+
+            if ($returnResults) {
+                return $result->fetchAll();
             }
 
-            Messenger::danger("Stopping process. Line " . __LINE__);
-        } else {
-            Messenger::success("Database query succeeded:");
+            // Als er resultaten zijn, toon deze
+            if ($result !== false && !$returnResults) {
+                while ($row = $result->fetch()) {
+                    foreach ($row as $value) {
+                        Messenger::success($value);
+                    }
+                }
+            }
 
-            foreach ($output as $line) {
-                Messenger::success($line);
-            }   
+        } catch (\PDOException $e) {
+            Messenger::warning("Database fout: " . $e->getMessage());
+            Messenger::danger("Process gestopt. Regel " . __LINE__);
         }
     }
 
     public static function checkForCompletion($credentials)
     {
+        if (self::$isConfigureOnly) {
+            return;
+        }
+
         $counter = 0;
         if (!self::$fileTransferProcessId) {
-            Messenger::danger("No file transfer process ID found.");
+            Messenger::danger("Geen bestandsoverdracht proces ID gevonden.");
             return false;
         }
 
@@ -453,7 +575,7 @@ class Migration
     //     $envPath = PRESTA_OPS_ROOT_DIR . '.env';
 
     //     // If .env already exists, you may want to read it, remove old lines
-    //     // for these keys, and then append or replace. Here, we’ll just
+    //     // for these keys, and then append or replace. Here, we'll just
     //     // *append* for simplicity.
 
     //     // Build .env content

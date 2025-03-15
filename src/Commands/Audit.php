@@ -3,9 +3,18 @@
 namespace PrestaOps\Commands;
 
 use PrestaOps\Tools\Messenger;
+use PrestaOps\Help\AuditHelp;
 
 class Audit
 {
+    /**
+     * Show help information for the audit command
+     */
+    public static function showHelp()
+    {
+        AuditHelp::show();
+    }
+
     public static function run($args = null)
     {
         Messenger::info("Scanning PrestaShop marketplace...");

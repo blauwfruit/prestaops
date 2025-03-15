@@ -5,6 +5,7 @@ namespace PrestaOps\Tools;
 use PrestaOps\Commands\Audit;
 use PrestaOps\Commands\Migration;
 use PrestaOps\Tools\Messenger;
+use PrestaOps\Help\PrestaOpsHelp;
 
 class CommandLineParser
 {
@@ -17,28 +18,43 @@ class CommandLineParser
     public static $availableCommands = [
         self::AUDIT => [
             '--modules',
+            '--help',
         ],
         self::MIGRATE => [
+            '--help',
             '--config',
             '--show-variables',
             '--enable-synchronous-mode',
             '--database-only',
             '--files-only',
             '--configure-only',
-            '--staging-url-affix',
+            '--staging-url-suffix',
             '--staging-url',
         ],
     ];
 
     public static function execute($argv)
     {
+        // Check for global help flag
+        if (count($argv) === 2 && $argv[1] === '--help') {
+            PrestaOpsHelp::show();
+            return;
+        }
+
         self::setCommand($argv);
 
         if (self::isCommand(self::AUDIT)) {
+            if (self::hasOption('--help')) {
+                return Audit::showHelp();
+            }
             return Audit::run();
         }
 
         if (self::isCommand(self::MIGRATE)) {
+            if (self::hasOption('--help')) {
+                return Migration::showHelp();
+            }
+
             if (self::hasOption('--config')) {
                 return Migration::checkVariables();
             }
@@ -68,10 +84,10 @@ class CommandLineParser
                 Migration::enableSynchronousMode();
             }
 
-            $stagingUrlAffix = self::getOptionValue('--staging-url-affix');
-            if ($stagingUrlAffix !== null) {
-                Messenger::info("Staging URL Affix: $stagingUrlAffix");
-                Migration::setStagingUrlAffix($stagingUrlAffix);
+            $stagingUrlSuffix = self::getOptionValue('--staging-url-suffix');
+            if ($stagingUrlSuffix !== null) {
+                Messenger::info("Staging URL Suffix: $stagingUrlSuffix");
+                Migration::setStagingUrlSuffix($stagingUrlSuffix);
             }
 
             $stagingUrl = self::getOptionValue('--staging-url');
@@ -84,8 +100,8 @@ class CommandLineParser
             }
 
             if (self::hasOption('--configure-only')) {
-                if (!self::hasOption('--staging-url-affix') && !self::hasOption('--staging-url')) {
-                    Messenger::danger('Staging prefix affix nor staging url is set.');
+                if (!self::hasOption('--staging-url-suffix') && !self::hasOption('--staging-url')) {
+                    Messenger::danger('Staging URL suffix nor staging url is set.');
                 }
 
                 Migration::setConfigureOnly();
