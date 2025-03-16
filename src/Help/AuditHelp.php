@@ -7,15 +7,34 @@ namespace PrestaOps\Help;
  */
 class AuditHelp extends AbstractHelp
 {
+    /**
+     * Show help information
+     */
+    public static function show() : void
+    {
+        echo self::getHelpText();
+    }
+
+    /**
+     * Get the complete help text
+     */
+    protected static function getHelpText(): string
+    {
+        return self::getHeader() .
+               self::getUsage() .
+               self::getOptions() .
+               self::getExamples() .
+               self::getConfiguration() .
+               self::getNotes();
+    }
+
     protected static function getHeader(): string
     {
         return <<<HELP
-PrestaOps Audit Tool
-===================
+PrestaOps Audit Command
+======================
 
-DESCRIPTION
------------
-A tool for auditing PrestaShop installations and modules.
+Audit a PrestaShop installation for security and performance issues.
 
 HELP;
     }
@@ -24,9 +43,8 @@ HELP;
     {
         return <<<HELP
 
-USAGE
------
-prestaops audit [options]
+Usage:
+  prestaops audit [options]
 
 HELP;
     }
@@ -35,10 +53,9 @@ HELP;
     {
         return <<<HELP
 
-OPTIONS
--------
---help              Show this help information
---modules           Audit installed modules and check for updates
+Options:
+  --help              Show this help information
+  --modules           Checks modules for new updates
 
 HELP;
     }
@@ -47,13 +64,9 @@ HELP;
     {
         return <<<HELP
 
-EXAMPLES
---------
-1. Audit all modules:
-   prestaops audit --modules
-
-2. Show audit help:
-   prestaops audit --help
+Examples:
+  1. Run module audit:
+     prestaops audit --modules
 
 HELP;
     }
@@ -62,11 +75,8 @@ HELP;
     {
         return <<<HELP
 
-CONFIGURATION
-------------
-- Requires a valid PrestaShop installation
-- GitHub authentication for checking module updates
-- Access to PrestaShop Marketplace API
+Configuration:
+  The audit command requires no configuration.
 
 HELP;
     }
@@ -75,13 +85,9 @@ HELP;
     {
         return <<<HELP
 
-NOTES
------
-- Ensure you have GitHub CLI configured for module version checks
-- Some modules may not be available in the PrestaShop Marketplace
-- Private modules will require additional authentication
-
-For support: support@prestaops.com
+Notes:
+  - The audit makes api calls to the PrestaShop marketplace to check for updates.
+  - It is recommended to authenticate with GitHub to avoid rate limiting.
 
 HELP;
     }

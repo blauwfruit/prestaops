@@ -43,6 +43,11 @@ class Migration
         'ps_search_index',
     ];
 
+    /**
+     * Whether to run commands synchronously
+     * When running synchronously, we see the output of commands
+     * immediately, which can be useful for debugging
+     */
     public static $isSynchronous = false;
     public static $isDatabaseOnly = false;
     public static $isFilesOnly = false;
@@ -85,9 +90,9 @@ class Migration
     }
 
     /**
-     * If you want to see what is happening, turn this on, this way  bash command is directly executing giving you the 
-     * results rightaway, that can be good for debuggin
-     **/
+     * Enable synchronous mode (--sync)
+     * This will show command output in real-time
+     */
     public static function enableSynchronousMode()
     {
         self::$isSynchronous = true;

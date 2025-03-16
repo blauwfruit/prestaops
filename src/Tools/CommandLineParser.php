@@ -24,7 +24,7 @@ class CommandLineParser
             '--help',
             '--config',
             '--show-variables',
-            '--enable-synchronous-mode',
+            '--sync',
             '--database-only',
             '--files-only',
             '--configure-only',
@@ -80,7 +80,7 @@ class CommandLineParser
                 return Migration::getVariables();
             }
 
-            if (self::hasOption('--enable-synchronous-mode')) {
+            if (self::hasOption('--sync')) {
                 Migration::enableSynchronousMode();
             }
 

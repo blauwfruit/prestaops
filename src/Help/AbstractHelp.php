@@ -5,7 +5,7 @@ namespace PrestaOps\Help;
 /**
  * Abstract base class for help documentation
  */
-abstract class AbstractHelp implements HelpInterface
+abstract class AbstractHelp
 {
     /**
      * Show help information
