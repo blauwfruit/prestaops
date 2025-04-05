@@ -301,47 +301,38 @@ class Migration
             }
         }
 
-        // Remote and local dump file paths
-        $remoteDumpFile = "{$credentials['SOURCE_PATH']}/{$credentials['SOURCE_DATABASE_NAME']}.sql.gz";
-        $localDumpFile = "{$credentials['DESTINATION_DATABASE_NAME']}.sql.gz";
+        Messenger::info("Database migratie configuratie:");
+        Messenger::info("Remote database: {$credentials['SOURCE_DATABASE_NAME']}");
+        Messenger::info("Local database: {$credentials['DESTINATION_DATABASE_NAME']}");
+        Messenger::info("Huidige directory: " . getcwd());
 
-        // Define the full Bash script
-        $bashScript = <<<BASH
-            #!/bin/bash
-            echo "Starting database migration..."
-
-            echo "Export the database and compress it"
-            # ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "mysqldump -h {$credentials['SOURCE_DATABASE_HOST']} -u {$credentials['SOURCE_DATABASE_USER']} -p'{$credentials['SOURCE_DATABASE_PASS']}' $ignoreTables {$credentials['SOURCE_DATABASE_NAME']} | gzip > $remoteDumpFile"
-
-            # Check if file is created
-            # ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "stat $remoteDumpFile"
-            
-            # scp -C {$credentials['SSH_USER']}@{$credentials['SSH_HOST']}:"{$remoteDumpFile}" {$localDumpFile}
-
-            gunzip -c {$localDumpFile} | tail -n +2 | mysql -h {$credentials['DESTINATION_DATABASE_HOST']} -u {$credentials['DESTINATION_DATABASE_USER']} -p'{$credentials['DESTINATION_DATABASE_PASS']}' {$credentials['DESTINATION_DATABASE_NAME']}
-
-            ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} "rm -f $remoteDumpFile"
-        BASH;
-
-        // Store the Bash script in a temporary file
-        $bashFile = "/tmp/db_migration.sh";
-        file_put_contents($bashFile, $bashScript);
-        chmod($bashFile, 0755);
+        // Define the command for direct database transfer
+        $directTransferCommand = "ssh {$credentials['SSH_USER']}@{$credentials['SSH_HOST']} " .
+                              "'mysqldump -h {$credentials['SOURCE_DATABASE_HOST']} " .
+                              "-u {$credentials['SOURCE_DATABASE_USER']} " .
+                              "-p\"{$credentials['SOURCE_DATABASE_PASS']}\" " .
+                              "$ignoreTables {$credentials['SOURCE_DATABASE_NAME']}' | " .
+                              "mysql -h {$credentials['DESTINATION_DATABASE_HOST']} " .
+                              "-u {$credentials['DESTINATION_DATABASE_USER']} " .
+                              "-p\"{$credentials['DESTINATION_DATABASE_PASS']}\" " .
+                              "{$credentials['DESTINATION_DATABASE_NAME']}";
 
         if (self::isSynchronous()) {
-            Messenger::info("Starting database migration...");
-            self::runCommandLive($bashFile);
+            Messenger::info("Directe database overdracht starten...");
+            self::runCommandLive($directTransferCommand);
+            Messenger::success("Database migratie voltooid");
         } else {
-            Messenger::info("Starting database migration in the background...");
-
-            exec("nohup $bashFile > /dev/null 2>&1 & echo $!", $output, $returnCode);
+            Messenger::info("Directe database overdracht starten in de achtergrond...");
+            
+            $backgroundCommand = "nohup $directTransferCommand > /dev/null 2>&1 & echo $!";
+            exec($backgroundCommand, $output, $returnCode);
 
             self::$databaseMigrationProcessId = $output[0] ?? null;
 
             if (!self::$databaseMigrationProcessId) {
-                Messenger::danger("Failed to start database migration.");
+                Messenger::danger("Kan database migratie niet starten.");
             } else {
-                Messenger::success("Database migration started in the background. Process ID: " . self::$databaseMigrationProcessId);
+                Messenger::success("Database migratie gestart in de achtergrond. Proces ID: " . self::$databaseMigrationProcessId);
             }
         }
     }
