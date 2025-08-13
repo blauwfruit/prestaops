@@ -19,6 +19,7 @@ class CommandLineParser
         self::AUDIT => [
             '--modules',
             '--help',
+            '--limit',
         ],
         self::MIGRATE => [
             '--help',
@@ -47,7 +48,13 @@ class CommandLineParser
             if (self::hasOption('--help')) {
                 return Audit::showHelp();
             }
-            return Audit::run();
+            
+            $limit = self::getOptionValue('--limit');
+            if ($limit !== null && !is_numeric($limit)) {
+                Messenger::danger("Limit value must be a number. Got: $limit");
+            }
+            
+            return Audit::run($limit ? (int)$limit : null);
         }
 
         if (self::isCommand(self::MIGRATE)) {

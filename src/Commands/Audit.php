@@ -15,9 +15,13 @@ class Audit
         AuditHelp::show();
     }
 
-    public static function run($args = null)
+    public static function run($limit = null)
     {
-        Messenger::info("Scanning PrestaShop marketplace...");
+        if ($limit !== null) {
+            Messenger::info("Scanning PrestaShop marketplace (limited to first $limit modules)...");
+        } else {
+            Messenger::info("Scanning PrestaShop marketplace...");
+        }
         
         $prestaShopRoot = getcwd();
         $paramatersFile = getcwd() . '/app/config/parameters.php';
@@ -86,21 +90,30 @@ class Audit
 
         $responseData = [];
 
-        file_put_contents('module-check.csv', "");
+        file_put_contents('module-check.csv', "Module;Author;Module Key;Version;Marketplace URL;Marketplace Status;\n");
 
-        // $modules = array_slice($modules, 45);
-
+        // Filter out non-directory entries first
+        $validModules = [];
         foreach ($modules as $module) {
-
             if ($module === '.' || $module === '..' || $module === '.htaccess') {
                 continue;
             }
-
+            
             $modulePath = $modulesPath . '/' . $module;
-
-            if (!is_dir($modulePath)) {
-                continue;
+            if (is_dir($modulePath)) {
+                $validModules[] = $module;
             }
+        }
+
+        // Apply limit if specified
+        if ($limit !== null && $limit > 0) {
+            $totalModules = count($validModules);
+            $validModules = array_slice($validModules, 0, $limit);
+            Messenger::info("Processing " . count($validModules) . " modules (limited from " . $totalModules . " total)");
+        }
+
+        foreach ($validModules as $module) {
+            $modulePath = $modulesPath . '/' . $module;
 
             $moduleDetails = getModuleDetails($modulePath);
             

@@ -56,6 +56,7 @@ HELP;
 Options:
   --help              Show this help information
   --modules           Checks modules for new updates
+  --limit=N           Limit the number of modules to check (useful for testing)
 
 HELP;
     }
@@ -67,6 +68,9 @@ HELP;
 Examples:
   1. Run module audit:
      prestaops audit --modules
+
+  2. Run module audit with limit (useful for testing):
+     prestaops audit --modules --limit=10
 
 HELP;
     }
@@ -88,6 +92,9 @@ HELP;
 Notes:
   - The audit makes api calls to the PrestaShop marketplace to check for updates.
   - It is recommended to authenticate with GitHub to avoid rate limiting.
+  - Modules with marketplace keys will be checked for availability status.
+  - Modules no longer on the marketplace will be marked as "No longer on marketplace".
+  - Use --limit option to avoid API rate limits during testing or development.
 
 HELP;
     }
