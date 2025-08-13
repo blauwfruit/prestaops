@@ -57,6 +57,7 @@ Options:
   --help              Show this help information
   --modules           Checks modules for new updates
   --limit=N           Limit the number of modules to check (useful for testing)
+  --slice=start,end   Process a specific range of modules (e.g., --slice=0,100)
 
 HELP;
     }

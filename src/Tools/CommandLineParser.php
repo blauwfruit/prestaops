@@ -20,6 +20,7 @@ class CommandLineParser
             '--modules',
             '--help',
             '--limit',
+            '--slice',
         ],
         self::MIGRATE => [
             '--help',
@@ -54,7 +55,35 @@ class CommandLineParser
                 Messenger::danger("Limit value must be a number. Got: $limit");
             }
             
-            return Audit::run($limit ? (int)$limit : null);
+            $slice = self::getOptionValue('--slice');
+            $sliceStart = null;
+            $sliceEnd = null;
+            
+            if ($slice !== null) {
+                // Validate slice format (should be "start,end")
+                if (!preg_match('/^\d+,\d+$/', $slice)) {
+                    Messenger::danger("Slice value must be in format 'start,end' (e.g., '0,100'). Got: $slice");
+                }
+                
+                list($sliceStart, $sliceEnd) = explode(',', $slice);
+                $sliceStart = (int)$sliceStart;
+                $sliceEnd = (int)$sliceEnd;
+                
+                if ($sliceStart >= $sliceEnd) {
+                    Messenger::danger("Slice start ($sliceStart) must be less than end ($sliceEnd)");
+                }
+                
+                if ($sliceStart < 0) {
+                    Messenger::danger("Slice start must be 0 or greater. Got: $sliceStart");
+                }
+            }
+            
+            // Check for conflicting options
+            if ($limit !== null && $slice !== null) {
+                Messenger::danger("Cannot use both --limit and --slice options together. Please use only one.");
+            }
+            
+            return Audit::run($limit ? (int)$limit : null, $sliceStart, $sliceEnd);
         }
 
         if (self::isCommand(self::MIGRATE)) {

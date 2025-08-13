@@ -15,10 +15,12 @@ class Audit
         AuditHelp::show();
     }
 
-    public static function run($limit = null)
+    public static function run($limit = null, $sliceStart = null, $sliceEnd = null)
     {
         if ($limit !== null) {
             Messenger::info("Scanning PrestaShop marketplace (limited to first $limit modules)...");
+        } elseif ($sliceStart !== null && $sliceEnd !== null) {
+            Messenger::info("Scanning PrestaShop marketplace (slice: modules $sliceStart to $sliceEnd)...");
         } else {
             Messenger::info("Scanning PrestaShop marketplace...");
         }
@@ -105,11 +107,25 @@ class Audit
             }
         }
 
-        // Apply limit if specified
+        // Apply limit or slice if specified
         if ($limit !== null && $limit > 0) {
             $totalModules = count($validModules);
             $validModules = array_slice($validModules, 0, $limit);
             Messenger::info("Processing " . count($validModules) . " modules (limited from " . $totalModules . " total)");
+        } elseif ($sliceStart !== null && $sliceEnd !== null) {
+            $totalModules = count($validModules);
+            
+            // Validate slice bounds against actual module count
+            if ($sliceStart >= $totalModules) {
+                Messenger::danger("Slice start ($sliceStart) is greater than or equal to total modules ($totalModules)");
+            }
+            
+            // Calculate the length for array_slice
+            $sliceLength = min($sliceEnd - $sliceStart, $totalModules - $sliceStart);
+            $validModules = array_slice($validModules, $sliceStart, $sliceLength);
+            
+            $actualEnd = $sliceStart + count($validModules) - 1;
+            Messenger::info("Processing " . count($validModules) . " modules (slice: $sliceStart to $actualEnd from $totalModules total)");
         }
 
         foreach ($validModules as $module) {
