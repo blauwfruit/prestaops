@@ -167,7 +167,13 @@ class Audit
 
                     Messenger::info("Module " . $moduleDetails['module_name'] . " checked successfully.");
                     $marketplaceUrl = "https://addons.prestashop.com/en/category-placeholder/{$id}-placeholder-title.html";
-                    file_put_contents('module-check.csv', "$module;{$moduleDetails['module_author']};{$moduleDetails['module_key']};{$moduleDetails['module_version']};{$marketplaceUrl};;\n", FILE_APPEND);
+                    
+                    // Get the latest version from the marketplace
+                    $latestVersion = self::getModuleVersionFromMarketplace($marketplaceUrl);
+                    $versionInfo = $latestVersion ? " (Latest: $latestVersion)" : "";
+                    Messenger::info("Module " . $moduleDetails['module_name'] . " - Current: {$moduleDetails['module_version']}" . $versionInfo);
+                    
+                    file_put_contents('module-check.csv', "$module;{$moduleDetails['module_author']};{$moduleDetails['module_key']};{$moduleDetails['module_version']};{$marketplaceUrl};{$latestVersion};\n", FILE_APPEND);
                 }
             } else {
                 if (file_exists($modulePath.'/composer.json')) {
@@ -229,5 +235,184 @@ class Audit
         } else {
             Messenger::danger("Failed to fetch release data from GitHub.");
         }
+    }
+
+    /**
+     * Get the latest version of a module from the PrestaShop marketplace
+     * 
+     * @param string $placeholderUrl The placeholder URL to visit
+     * @return string|null The latest version number or null if not found
+     */
+    public static function getModuleVersionFromMarketplace($placeholderUrl)
+    {
+        try {
+            // Extract module ID from the placeholder URL
+            if (preg_match('/\/(\d+)-/', $placeholderUrl, $matches)) {
+                $moduleId = $matches[1];
+                
+                // Try different URL patterns for the actual product page
+                $possibleUrls = [
+                    "https://addons.prestashop.com/en/modules/{$moduleId}",
+                    "https://addons.prestashop.com/en/module/{$moduleId}",
+                    "https://addons.prestashop.com/en/product/{$moduleId}",
+                    $placeholderUrl  // fallback to original
+                ];
+                
+                foreach ($possibleUrls as $url) {
+                    $result = self::fetchModulePageWithRetry($url);
+                    if ($result !== null) {
+                        return $result;
+                    }
+                    // Add a small delay between requests to be respectful
+                    sleep(1);
+                }
+            }
+            
+            return null;
+
+        } catch (Exception $e) {
+            Messenger::warning("Error fetching module version: " . $e->getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Fetch module page with retry logic and different strategies
+     */
+    private static function fetchModulePageWithRetry($url)
+    {
+        // Try with different user agents and techniques
+        $userAgents = [
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ];
+        
+        foreach ($userAgents as $userAgent) {
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL => $url,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 10,
+                CURLOPT_TIMEOUT => 30,
+                CURLOPT_USERAGENT => $userAgent,
+                CURLOPT_HTTPHEADER => [
+                    'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language: en-US,en;q=0.5',
+                    'Accept-Encoding: gzip, deflate, br',
+                    'Connection: keep-alive',
+                    'Upgrade-Insecure-Requests: 1',
+                    'Cache-Control: max-age=0',
+                    'sec-ch-ua: "Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                    'sec-ch-ua-mobile: ?0',
+                    'sec-ch-ua-platform: "macOS"',
+                    'Sec-Fetch-Dest: document',
+                    'Sec-Fetch-Mode: navigate',
+                    'Sec-Fetch-Site: none',
+                    'Sec-Fetch-User: ?1'
+                ],
+                CURLOPT_ENCODING => '', // This automatically handles gzip/deflate decompression
+                CURLOPT_SSL_VERIFYPEER => true,
+                CURLOPT_SSL_VERIFYHOST => 2,
+                CURLOPT_COOKIEJAR => '/tmp/prestashop_cookies.txt',
+                CURLOPT_COOKIEFILE => '/tmp/prestashop_cookies.txt'
+            ]);
+
+            // Messenger::info("Trying URL: $url"); // Debug line - commented out
+            $html = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $finalUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+            $error = curl_error($ch);
+            curl_close($ch);
+            
+            if ($html === false || !empty($error)) {
+                // Messenger::warning("Failed to fetch $url - Error: $error"); // Debug line - commented out
+                continue;
+            }
+            
+            if ($httpCode >= 400) {
+                // Messenger::warning("HTTP error $httpCode when fetching: $url"); // Debug line - commented out
+                continue;
+            }
+            
+            // Messenger::info("Successfully fetched: $finalUrl"); // Debug line - commented out
+            
+            // Debug: Uncomment the lines below for debugging
+            // if (strpos($html, 'product_version') !== false) {
+            //     if (preg_match('/.{0,100}product_version.{0,100}/', $html, $matches)) {
+            //         Messenger::info("product_version context: " . htmlspecialchars($matches[0]));
+            //     }
+            // }
+
+            // Look for version information in the HTML content
+            $version = self::extractVersionFromHtml($html);
+            if ($version !== null) {
+                // Messenger::info("Found version: $version"); // Debug line - commented out
+                return $version;
+            }
+            
+            // Try next user agent if no version found
+        }
+        
+        return null; // No version found with any user agent
+    }
+    
+    /**
+     * Extract version information from HTML content
+     */
+    private static function extractVersionFromHtml($html)
+    {
+        // Try multiple patterns to find version information
+        $patterns = [
+            // Pattern for PrestaShop marketplace product_version in JSON data - THIS IS THE KEY ONE!
+            '/"product_version"\s*:\s*"([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)"/',
+            // Specific pattern for PrestaShop marketplace "About module v. X.X.X" format
+            '/<span[^>]*class=["\'][^"\']*muik-about-module__title-version[^"\']*["\'][^>]*>v\.\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)<\/span>/i',
+            // Alternative pattern for the same structure
+            '/<h4[^>]*>About module[^<]*<span[^>]*>v\.\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)<\/span>/i',
+            // Pattern for version in JavaScript/JSON data structures
+            '/"moduleVersion"\s*:\s*"([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)"/',
+            '/"version"\s*:\s*"([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)"/',
+            '/"currentVersion"\s*:\s*"([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)"/',
+            '/"latestVersion"\s*:\s*"([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)"/',
+            // Pattern looking for version in window/global JavaScript variables
+            '/window\.__INITIAL_STATE__[^}]*version[^}]*"([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)"/i',
+            // Pattern for version in meta tags
+            '/<meta[^>]+property=["\']product:version["\'][^>]+content=["\']([^"\']+)["\']/',
+            // Pattern for version in the page content
+            '/Version\s*:?\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)/',
+            '/version\s*:?\s*([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)/i',
+            // Pattern for version in download links or buttons
+            '/download[^>]*version[^>]*([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)/i',
+            // Pattern for version in class names or data attributes
+            '/data-version=["\']([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)["\']/',
+            // Pattern for version in spans or divs with version class
+            '/<(?:span|div)[^>]*class=["\'][^"\']*version[^"\']*["\'][^>]*>([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?)<\/(?:span|div)>/i',
+            // More generic pattern for semantic version numbers (but more restrictive to avoid false positives)
+            '/\b([0-9]+\.[0-9]+\.[0-9]+)\b/'
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $html, $matches)) {
+                $version = $matches[1];
+                // Validate that it looks like a proper version number
+                if (preg_match('/^[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?$/', $version)) {
+                    return $version;
+                }
+            }
+        }
+
+        // If no version found with patterns, try to extract from common locations
+        // Look for version in title or h1 tags
+        if (preg_match('/<title[^>]*>.*?([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?).*?<\/title>/i', $html, $matches)) {
+            return $matches[1];
+        }
+
+        if (preg_match('/<h1[^>]*>.*?([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\.[0-9]+)?).*?<\/h1>/i', $html, $matches)) {
+            return $matches[1];
+        }
+
+        return null;
     }
 }
