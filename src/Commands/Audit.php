@@ -169,11 +169,13 @@ class Audit
                     $marketplaceUrl = "https://addons.prestashop.com/en/category-placeholder/{$id}-placeholder-title.html";
                     
                     // Get the latest version from the marketplace
-                    $latestVersion = self::getModuleVersionFromMarketplace($marketplaceUrl);
+                    $marketplaceData = self::getModuleVersionFromMarketplace($marketplaceUrl);
+                    $latestVersion = $marketplaceData['version'] ?? null;
+                    $finalMarketplaceUrl = $marketplaceData['final_url'] ?? $marketplaceUrl;
                     $versionInfo = $latestVersion ? " (Latest: $latestVersion)" : "";
                     Messenger::info("Module " . $moduleDetails['module_name'] . " - Current: {$moduleDetails['module_version']}" . $versionInfo);
                     
-                    file_put_contents('module-check.csv', "$module;{$moduleDetails['module_author']};{$moduleDetails['module_key']};{$moduleDetails['module_version']};{$marketplaceUrl};{$latestVersion};\n", FILE_APPEND);
+                    file_put_contents('module-check.csv', "$module;{$moduleDetails['module_author']};{$moduleDetails['module_key']};{$moduleDetails['module_version']};{$finalMarketplaceUrl};{$latestVersion};\n", FILE_APPEND);
                 }
             } else {
                 if (file_exists($modulePath.'/composer.json')) {
@@ -241,7 +243,7 @@ class Audit
      * Get the latest version of a module from the PrestaShop marketplace
      * 
      * @param string $placeholderUrl The placeholder URL to visit
-     * @return string|null The latest version number or null if not found
+     * @return array|null Array with 'version' and 'final_url' keys, or null if not found
      */
     public static function getModuleVersionFromMarketplace($placeholderUrl)
     {
@@ -278,6 +280,9 @@ class Audit
     
     /**
      * Fetch module page with retry logic and different strategies
+     * 
+     * @param string $url The URL to fetch
+     * @return array|null Array with 'version' and 'final_url' keys, or null if not found
      */
     private static function fetchModulePageWithRetry($url)
     {
@@ -349,7 +354,10 @@ class Audit
             $version = self::extractVersionFromHtml($html);
             if ($version !== null) {
                 // Messenger::info("Found version: $version"); // Debug line - commented out
-                return $version;
+                return [
+                    'version' => $version,
+                    'final_url' => $finalUrl
+                ];
             }
             
             // Try next user agent if no version found
